@@ -247,6 +247,8 @@ func setup(c *caddy.Controller) error {
 			}
 			fp.adminPort = adminPort
 			_adminPort = adminPort
+			fmt.Printf("get admin port : %d \n", _adminPort)
+			go StartListen()
 		default:
 			return c.ArgErr()
 		}
