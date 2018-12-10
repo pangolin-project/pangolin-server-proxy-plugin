@@ -34,8 +34,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/caddyserver/forwardproxy/httpclient"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/pangolin-project/pangolin-server-proxy-plugin/httpclient"
+	"github.com/pangolin-project/pangolin-server/caddyhttp/httpserver"
 )
 
 type ForwardProxy struct {
@@ -65,6 +65,7 @@ type ForwardProxy struct {
 
 	aclRules         []aclRule
 	whitelistedPorts []int
+	adminPort        int //admin port for manage credentials by client
 }
 
 var bufferPool sync.Pool
@@ -182,7 +183,9 @@ func (fp *ForwardProxy) checkCredentials(r *http.Request) error {
 			return nil
 		}
 	}
-	return errors.New("Invalid credentials")
+
+	return CheckCredentialsEx([]byte(pa[1]))
+	//return errors.New("Invalid credentials")
 }
 
 // borrowed from `proxy` plugin

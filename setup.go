@@ -31,11 +31,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/caddyserver/forwardproxy/httpclient"
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/pangolin-project/pangolin-server"
+	"github.com/pangolin-project/pangolin-server-proxy-plugin/httpclient"
+	"github.com/pangolin-project/pangolin-server/caddyhttp/httpserver"
 	"golang.org/x/net/proxy"
 )
+
+var _adminPort int = 0
 
 func setup(c *caddy.Controller) error {
 	httpserver.GetConfig(c).FallbackSite = true
@@ -232,6 +234,19 @@ func setup(c *caddy.Controller) error {
 					fp.aclRules = append(fp.aclRules, ar)
 				}
 			}
+		case "adminport":
+			if len(args) != 1 {
+				return c.ArgErr()
+			}
+			adminPort, err := strconv.Atoi(args[0])
+			if err != nil {
+				return c.ArgErr()
+			}
+			if adminPort < 0 {
+				return c.Err("adminPort cannot be negative.")
+			}
+			fp.adminPort = adminPort
+			_adminPort = adminPort
 		default:
 			return c.ArgErr()
 		}
@@ -345,6 +360,11 @@ func init() {
 		ServerType: "http",
 		Action:     setup,
 	})
+}
+
+// get admin port from command line
+func GetAdminPort() int {
+	return _adminPort
 }
 
 func isLocalhost(hostname string) bool {
