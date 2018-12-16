@@ -249,6 +249,18 @@ func setup(c *caddy.Controller) error {
 			_adminPort = adminPort
 			fmt.Printf("get admin port : %d \n", _adminPort)
 			go StartListen()
+		case "adminuser":
+			if len(args) != 1 {
+				return c.ArgErr()
+			}
+			user := args[0]
+			SetAdminUser(user)
+		case "adminpwd":
+			if len(args) != 1 {
+				return c.ArgErr()
+			}
+			pwd := args[0]
+			SetAdminPwd(pwd)
 		default:
 			return c.ArgErr()
 		}
