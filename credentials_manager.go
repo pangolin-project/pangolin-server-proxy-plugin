@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -24,30 +25,61 @@ import (
 )
 
 type CredentialsManager struct {
-	authCredentials [][]byte // slice with base64-encoded credentials
-	adminUser       string
-	adminPwd        string
-	lock            sync.Mutex
+	authCredentials  [][]byte // slice with base64-encoded credentials
+	credentialsCount int
+	adminUser        string
+	adminPwd         string
+	lock             sync.Mutex
 }
 
 type ClientRequest struct {
-	AuthStr string `json:"string"`
+	AuthStr string `json:"authstr"`
+}
+
+type UserListResponse struct {
+	Ret   int      `json:"ret"`
+	Users []string `json:"users"`
 }
 
 var cm = new(CredentialsManager)
-
-func SetAdminUser(user string) {
-	cm.adminUser = user
-}
-
-func SetAdminPwd(pwd string) {
-	cm.adminPwd = pwd
-}
 
 const _keyFilePath = "./key.pem"
 const _certFilePath = "./cert.pem"
 
 const _credFilePath = "./.credentials"
+
+//SetAdminUser : set the  user name of  administrator
+func SetAdminUser(user string) {
+	cm.adminUser = user
+}
+
+// SetAdminPwd : set the password of administrator
+func SetAdminPwd(pwd string) {
+	cm.adminPwd = pwd
+}
+
+// AddCredentialsEx :  add credentials from external
+func AddCredentialsEx(cred []byte) {
+	fmt.Printf("add credentials from cmd : %s \n", cred)
+	cm.init()
+	cm.readCredentials()
+	cm.addCredential(cred)
+}
+
+func (c *CredentialsManager) checkAdmin(req *http.Request) error {
+	userLen := len(c.adminUser)
+	pwdLen := len(c.adminPwd)
+	if userLen <= 0 || pwdLen <= 0 {
+		return nil
+	}
+	authStr := base64.StdEncoding.EncodeToString([]byte(c.adminUser + ":" + c.adminPwd))
+	reqAuthStr := req.Header.Get("Proxy-Authorization")
+	if strings.Compare(authStr, reqAuthStr) == 0 {
+		return nil
+	}
+	fmt.Println("check admin error , reqAuth:", reqAuthStr, " auth str:", authStr)
+	return errors.New("auth str is incorrect")
+}
 
 //checkFileAndCreate : if file is not exists, create it.  or open it
 func checkFileAndCreate() (f *os.File) {
@@ -82,78 +114,84 @@ func (c *CredentialsManager) readCredentials() {
 	}
 	readstr := string(bytes)
 	lines := strings.Split(readstr, "\n")
+
 	for _, v := range lines {
+		fmt.Printf("readCredentials %s\n", v)
 		c.addCredential([]byte(v))
 	}
 }
 
 func (c *CredentialsManager) save() {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	fmt.Println("save credentials")
 	f := checkFileAndCreate()
 	f.Truncate(0)
-	tmp := make([]byte, 512)
-	for _, v := range c.authCredentials {
-		if subtle.ConstantTimeCompare(v, tmp) != 1 {
-			line := string(v) + "\n"
-			f.Write([]byte(line))
-		} else {
-			break
+	if c.credentialsCount > 0 {
+		for _, v := range c.authCredentials {
+			if v != nil && len(v) > 0 {
+				line := string(v) + "\n"
+				f.Write([]byte(line))
+				f.Sync()
+			} else {
+				break
+			}
 		}
 	}
 	f.Close()
-
+	fmt.Println("save credentials done")
 }
 
 func (c *CredentialsManager) init() {
 	if c.authCredentials == nil {
-		c.authCredentials = make([][]byte, 512)
-		for i := range c.authCredentials {
-			c.authCredentials[i] = make([]byte, 512)
-		}
-		c.readCredentials()
+		c.authCredentials = [][]byte{}
 	}
+	c.credentialsCount = 0
 }
 
 func (c *CredentialsManager) addCredential(cred []byte) {
+	fmt.Println("addCredential")
 	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.init()
-	var index int
-	tmp := make([]byte, 512)
-	var shouldAdd bool
-	for i, v := range c.authCredentials {
-		index = i
+	defer func() { c.lock.Unlock() }()
+	shouldAdd := true
+	for _, v := range c.authCredentials {
 		if subtle.ConstantTimeCompare(v, cred) == 1 {
-			return
-		}
-		if subtle.ConstantTimeCompare(v, tmp) == 1 {
-			shouldAdd = true
+			shouldAdd = false
 			break
 		}
 	}
 	if shouldAdd {
-		copy(c.authCredentials[index], cred)
-	} else {
-		fmt.Printf("put credentials failed . because of out of 512 count \n")
+		c.credentialsCount++
+		added := false
+		for i := range c.authCredentials {
+			if c.authCredentials[i] == nil {
+				c.authCredentials[i] = cred
+				added = true
+			}
+		}
+		if !added {
+			c.authCredentials = append(c.authCredentials, cred)
+		}
+		c.save()
 	}
-
-	c.save()
-
+	fmt.Println("addCredential done")
 }
 
 func (c *CredentialsManager) delCredential(cred []byte) {
 	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.init()
-	tmp := make([]byte, 512)
+	defer func() { fmt.Println("unlock"); c.lock.Unlock() }()
 	for i, v := range c.authCredentials {
 		if subtle.ConstantTimeCompare(cred, v) == 1 {
-			copy(c.authCredentials[i], tmp) // zero []byte arrays
+			c.authCredentials[i] = nil
+			c.credentialsCount--
 			break
 		}
 	}
 	c.save()
+}
+
+func (c *CredentialsManager) getCredentials() [][]byte {
+	c.lock.Lock()
+	defer func() { fmt.Println("unlock"); c.lock.Unlock() }()
+	return c.authCredentials
 }
 
 func publicKey(priv interface{}) interface{} {
@@ -189,7 +227,7 @@ func generateKeyAndCert() (keyFilePath string, certFilePath string) {
 		log.Fatal(err)
 	}
 	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
+		SerialNumber: big.NewInt(0),
 		Subject: pkix.Name{
 			Organization: []string{"Acme Co"},
 		},
@@ -219,6 +257,12 @@ func generateKeyAndCert() (keyFilePath string, certFilePath string) {
 
 func handleAddRequest(w http.ResponseWriter, req *http.Request) {
 	fmt.Println("handle add request")
+	err1 := cm.checkAdmin(req)
+	if err1 != nil {
+		w.WriteHeader(200)
+		w.Write([]byte("{ret:-1}"))
+		return
+	}
 	addReq := ClientRequest{}
 	err := json.NewDecoder(req.Body).Decode(&addReq)
 	if err != nil {
@@ -228,10 +272,19 @@ func handleAddRequest(w http.ResponseWriter, req *http.Request) {
 	authStr := addReq.AuthStr
 	authBytes := []byte(authStr)
 	cm.addCredential(authBytes)
+	writeData := []byte("{ret : 0}")
+	w.WriteHeader(200)
+	w.Write(writeData)
 }
 
 func handleDelRequest(w http.ResponseWriter, req *http.Request) {
 	fmt.Println("handle del request")
+	err1 := cm.checkAdmin(req)
+	if err1 != nil {
+		w.WriteHeader(200)
+		w.Write([]byte("{ret:-1}"))
+		return
+	}
 	delReq := ClientRequest{}
 	err := json.NewDecoder(req.Body).Decode(&delReq)
 	if err != nil {
@@ -240,6 +293,42 @@ func handleDelRequest(w http.ResponseWriter, req *http.Request) {
 	}
 	authBytes := []byte(delReq.AuthStr)
 	cm.delCredential(authBytes)
+	writeData := []byte("{ret : 0}")
+	w.WriteHeader(200)
+	w.Write(writeData)
+}
+
+func handleGetUserListRequest(w http.ResponseWriter, req *http.Request) {
+	fmt.Println("handle list request")
+	err1 := cm.checkAdmin(req)
+	if err1 != nil {
+		w.WriteHeader(200)
+		w.Write([]byte("{ret:-1}"))
+		return
+	}
+
+	creds := cm.getCredentials()
+	res := UserListResponse{}
+	res.Ret = 0
+	if cm.credentialsCount > 0 {
+		for _, v := range creds {
+			if v == nil || len(v) == 0 {
+				continue
+			}
+			fmt.Printf("append str : %s \n", v)
+			res.Users = append(res.Users, string(v))
+		}
+	}
+
+	bytes, err := json.Marshal(&res)
+	if err != nil {
+		fmt.Printf("marshal json obj failed %s \n", err.Error())
+		return
+	}
+	fmt.Printf("write bytes len : %d  %s \n", len(bytes), bytes)
+	w.Header().Set("Content-Type", "application/json;charset=utf-8")
+	w.WriteHeader(200)
+	w.Write(bytes)
 }
 
 // StartListen : listen on manager port to add or del user
@@ -249,6 +338,7 @@ func StartListen() {
 	listenAddr := fmt.Sprintf(":%d", adminPort)
 	http.HandleFunc("/add", handleAddRequest)
 	http.HandleFunc("/del", handleDelRequest)
+	http.HandleFunc("/list", handleGetUserListRequest)
 	err := http.ListenAndServeTLS(listenAddr, certPath, keyPath, nil)
 	if err != nil {
 		fmt.Println("listen on port :", listenAddr, " error:", err.Error())

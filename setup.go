@@ -82,6 +82,7 @@ func setup(c *caddy.Controller) error {
 			base64.StdEncoding.Encode(buf, []byte(args[0]+":"+args[1]))
 			fp.authCredentials = append(fp.authCredentials, buf)
 			fp.authRequired = true
+			go AddCredentialsEx(buf)
 		case "ports":
 			if len(args) == 0 {
 				return c.ArgErr()
