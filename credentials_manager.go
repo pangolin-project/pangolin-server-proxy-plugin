@@ -64,6 +64,7 @@ func AddCredentialsEx(cred []byte) {
 	cm.init()
 	cm.readCredentials()
 	cm.addCredential(cred)
+	cm.save()
 }
 
 func (c *CredentialsManager) checkAdmin(req *http.Request) error {
@@ -112,23 +113,29 @@ func (c *CredentialsManager) readCredentials() {
 		fmt.Printf("read credential file error : %s \n", err.Error())
 		return
 	}
+	if len(bytes) == 0 {
+		return
+	}
 	readstr := string(bytes)
 	lines := strings.Split(readstr, "\n")
 
 	for _, v := range lines {
-		fmt.Printf("readCredentials %s\n", v)
-		c.addCredential([]byte(v))
+		if len(v) > 0 {
+			c.addCredential([]byte(v))
+		}
+
 	}
 }
 
 func (c *CredentialsManager) save() {
-	fmt.Println("save credentials")
+	fmt.Println("save credentials count :", c.credentialsCount)
 	f := checkFileAndCreate()
 	f.Truncate(0)
 	if c.credentialsCount > 0 {
 		for _, v := range c.authCredentials {
 			if v != nil && len(v) > 0 {
 				line := string(v) + "\n"
+				fmt.Printf("save cred : %s", line)
 				f.Write([]byte(line))
 				f.Sync()
 			} else {
@@ -148,7 +155,7 @@ func (c *CredentialsManager) init() {
 }
 
 func (c *CredentialsManager) addCredential(cred []byte) {
-	fmt.Println("addCredential")
+	fmt.Printf("addCredential %s \n", cred)
 	c.lock.Lock()
 	defer func() { c.lock.Unlock() }()
 	shouldAdd := true
@@ -170,7 +177,6 @@ func (c *CredentialsManager) addCredential(cred []byte) {
 		if !added {
 			c.authCredentials = append(c.authCredentials, cred)
 		}
-		c.save()
 	}
 	fmt.Println("addCredential done")
 }
@@ -185,7 +191,6 @@ func (c *CredentialsManager) delCredential(cred []byte) {
 			break
 		}
 	}
-	c.save()
 }
 
 func (c *CredentialsManager) getCredentials() [][]byte {
@@ -272,6 +277,7 @@ func handleAddRequest(w http.ResponseWriter, req *http.Request) {
 	authStr := addReq.AuthStr
 	authBytes := []byte(authStr)
 	cm.addCredential(authBytes)
+	cm.save()
 	writeData := []byte("{ret : 0}")
 	w.WriteHeader(200)
 	w.Write(writeData)
@@ -293,6 +299,7 @@ func handleDelRequest(w http.ResponseWriter, req *http.Request) {
 	}
 	authBytes := []byte(delReq.AuthStr)
 	cm.delCredential(authBytes)
+	cm.save()
 	writeData := []byte("{ret : 0}")
 	w.WriteHeader(200)
 	w.Write(writeData)
