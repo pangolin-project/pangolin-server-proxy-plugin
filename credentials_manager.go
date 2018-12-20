@@ -131,18 +131,19 @@ func (c *CredentialsManager) save() {
 	fmt.Println("save credentials count :", c.credentialsCount)
 	f := checkFileAndCreate()
 	f.Truncate(0)
+	f.Sync()
 	if c.credentialsCount > 0 {
 		for _, v := range c.authCredentials {
 			if v != nil && len(v) > 0 {
 				line := string(v) + "\n"
 				fmt.Printf("save cred : %s", line)
 				f.Write([]byte(line))
-				f.Sync()
 			} else {
 				break
 			}
 		}
 	}
+	f.Sync()
 	f.Close()
 	fmt.Println("save credentials done")
 }
@@ -172,18 +173,20 @@ func (c *CredentialsManager) addCredential(cred []byte) {
 			if c.authCredentials[i] == nil {
 				c.authCredentials[i] = cred
 				added = true
+				break
 			}
 		}
 		if !added {
 			c.authCredentials = append(c.authCredentials, cred)
 		}
+	} else {
+		fmt.Printf("do not add %s\n", cred)
 	}
-	fmt.Println("addCredential done")
 }
 
 func (c *CredentialsManager) delCredential(cred []byte) {
 	c.lock.Lock()
-	defer func() { fmt.Println("unlock"); c.lock.Unlock() }()
+	defer func() { c.lock.Unlock() }()
 	for i, v := range c.authCredentials {
 		if subtle.ConstantTimeCompare(cred, v) == 1 {
 			c.authCredentials[i] = nil
@@ -195,7 +198,7 @@ func (c *CredentialsManager) delCredential(cred []byte) {
 
 func (c *CredentialsManager) getCredentials() [][]byte {
 	c.lock.Lock()
-	defer func() { fmt.Println("unlock"); c.lock.Unlock() }()
+	defer func() { c.lock.Unlock() }()
 	return c.authCredentials
 }
 
@@ -265,7 +268,7 @@ func handleAddRequest(w http.ResponseWriter, req *http.Request) {
 	err1 := cm.checkAdmin(req)
 	if err1 != nil {
 		w.WriteHeader(200)
-		w.Write([]byte("{ret:-1}"))
+		w.Write([]byte("{\"ret\":-1}"))
 		return
 	}
 	addReq := ClientRequest{}
@@ -278,7 +281,7 @@ func handleAddRequest(w http.ResponseWriter, req *http.Request) {
 	authBytes := []byte(authStr)
 	cm.addCredential(authBytes)
 	cm.save()
-	writeData := []byte("{ret : 0}")
+	writeData := []byte("{\"ret\" : 0}")
 	w.WriteHeader(200)
 	w.Write(writeData)
 }
@@ -288,7 +291,7 @@ func handleDelRequest(w http.ResponseWriter, req *http.Request) {
 	err1 := cm.checkAdmin(req)
 	if err1 != nil {
 		w.WriteHeader(200)
-		w.Write([]byte("{ret:-1}"))
+		w.Write([]byte("{\"ret\":-1}"))
 		return
 	}
 	delReq := ClientRequest{}
@@ -300,7 +303,7 @@ func handleDelRequest(w http.ResponseWriter, req *http.Request) {
 	authBytes := []byte(delReq.AuthStr)
 	cm.delCredential(authBytes)
 	cm.save()
-	writeData := []byte("{ret : 0}")
+	writeData := []byte("{\"ret\" : 0}")
 	w.WriteHeader(200)
 	w.Write(writeData)
 }
@@ -310,7 +313,7 @@ func handleGetUserListRequest(w http.ResponseWriter, req *http.Request) {
 	err1 := cm.checkAdmin(req)
 	if err1 != nil {
 		w.WriteHeader(200)
-		w.Write([]byte("{ret:-1}"))
+		w.Write([]byte("{\"ret\":-1}"))
 		return
 	}
 
@@ -322,7 +325,6 @@ func handleGetUserListRequest(w http.ResponseWriter, req *http.Request) {
 			if v == nil || len(v) == 0 {
 				continue
 			}
-			fmt.Printf("append str : %s \n", v)
 			res.Users = append(res.Users, string(v))
 		}
 	}
@@ -355,8 +357,10 @@ func StartListen() {
 // CheckCredentialsEx : check if credentials is correct
 func CheckCredentialsEx(cd []byte) error {
 	for _, creds := range cm.authCredentials {
-		if subtle.ConstantTimeCompare(creds, cd) == 1 {
-			return nil
+		if creds != nil && len(creds) > 0 {
+			if subtle.ConstantTimeCompare(creds, cd) == 1 {
+				return nil
+			}
 		}
 	}
 	return errors.New("Invalid credentials")
